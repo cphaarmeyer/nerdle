@@ -44,11 +44,17 @@ estimate_black <- function(nerdle) {
     left_join(x = nerdle, join_by(string))
 }
 
-# example to find best second guess
+# find best first guess
 nerdle |>
-  drop_symbols(c(9, "-", 5, 7, 1)) |>
-  keep_symbols(c(6, 2)) |>
-  filter(p1 == 6, p6 != "=", p8 != 2) |>
   estimate_green() |>
   estimate_black() |>
-  arrange(desc(ndistinct), desc(egreen), desc(eblack))
+  arrange(desc(ndistinct), desc(egreen))
+
+# example to find best second guess
+nerdle |>
+  drop_symbols(c(4, "-", 3, 7)) |>
+  keep_symbols(c(2, 1)) |>
+  filter(p2 == 0, p4 != 2, p6 == "=", p7 != 1) |>
+  estimate_green() |>
+  estimate_black() |>
+  arrange(desc(eblack), desc(egreen))
