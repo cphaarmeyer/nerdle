@@ -44,6 +44,29 @@ estimate_black <- function(nerdle) {
     left_join(x = nerdle, join_by(string))
 }
 
+filter_black <- function(nerdle, x) {
+  drop_symbols(nerdle, str_split_1(x, ""))
+}
+
+filter_green <- function(nerdle, x) {
+  enframe(str_split_1(x, "")) |>
+    filter(value %in% nerdle_longer(nerdle)$value) |>
+    pmap(function(name, value) str_sub(nerdle$string, name, name) == value) |>
+    reduce(`&`) |>
+    filter(.data = nerdle)
+}
+
+filter_red <- function(nerdle, x) {
+  enframe(str_split_1(x, "")) |>
+    filter(value %in% nerdle_longer(nerdle)$value) |>
+    pmap(function(name, value) str_sub(nerdle$string, name, name) != value) |>
+    reduce(`&`) |>
+    filter(.data = nerdle) |>
+    keep_symbols(str_split_1(x, "")[
+      str_split_1(x, "") %in% nerdle_longer(nerdle)$value
+    ])
+}
+
 # find best first guess
 nerdle |>
   estimate_green() |>
@@ -52,9 +75,9 @@ nerdle |>
 
 # example to find best second guess
 nerdle |>
-  drop_symbols(c(4, "-", 3, 7)) |>
-  keep_symbols(c(2, 1)) |>
-  filter(p2 == 0, p4 != 2, p6 == "=", p7 != 1) |>
+  filter_black("4-37") |>
+  filter_green("x0xxx=xx") |>
+  filter_red("xxx2xx1x") |>
   estimate_green() |>
   estimate_black() |>
   arrange(desc(eblack), desc(egreen))
