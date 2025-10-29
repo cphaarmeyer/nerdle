@@ -1,10 +1,18 @@
 library(tidyverse)
 
 nerdle <- nanoparquet::read_parquet("solutions.parquet") |>
-  mutate(ndistinct = apply(pick(p1:p8), 1, n_distinct))
+  mutate(values = unname(as.matrix(pick(p1:p8))), .keep = "unused") |>
+  mutate(ndistinct = apply(values, 1, n_distinct))
 
 nerdle_longer <- function(nerdle) {
-  nerdle |> select(string, p1:p8) |> pivot_longer(-string)
+  with(
+    nerdle,
+    tibble(
+      string = vctrs::vec_rep_each(string, ncol(values)),
+      position = vctrs::vec_rep(seq_len(ncol(values)), nrow(values)),
+      value = as.vector(t(values))
+    )
+  )
 }
 
 drop_symbols <- function(nerdle, x) {
@@ -22,21 +30,20 @@ keep_symbols <- function(nerdle, y) {
 # expected number of green symbols
 estimate_green <- function(nerdle) {
   nerdle_longer(nerdle) |>
-    add_count(name, value) |>
-    mutate(prob = n / n(), .by = name) |>
+    add_count(position, value) |>
+    mutate(prob = n / n(), .by = position) |>
     summarise(egreen = sum(prob), .by = string) |>
     left_join(x = nerdle, join_by(string))
 }
 
 # expected number of black symbols
 estimate_black <- function(nerdle) {
-  rhs <- nerdle_longer(nerdle) |>
-    distinct(value) |>
-    mutate(
-      prob = map_dbl(value, function(a) {
-        mean(apply(nerdle |> select(p1:p8), 1, function(b) !a %in% b))
-      })
-    )
+  rhs <- tibble(
+    value = unique(as.vector(nerdle$values)),
+    prob = map_dbl(value, function(a) {
+      mean(apply(nerdle$values, 1, function(b) !a %in% b))
+    })
+  )
   nerdle_longer(nerdle) |>
     distinct(string, value) |>
     left_join(rhs, join_by(value)) |>
@@ -50,7 +57,7 @@ filter_black <- function(nerdle, x) {
 
 filter_green <- function(nerdle, x) {
   enframe(str_split_1(x, "")) |>
-    filter(value %in% nerdle_longer(nerdle)$value) |>
+    filter(value %in% as.vector(nerdle$values)) |>
     pmap(function(name, value) str_sub(nerdle$string, name, name) == value) |>
     reduce(`&`) |>
     filter(.data = nerdle)
@@ -58,12 +65,12 @@ filter_green <- function(nerdle, x) {
 
 filter_red <- function(nerdle, x) {
   enframe(str_split_1(x, "")) |>
-    filter(value %in% nerdle_longer(nerdle)$value) |>
+    filter(value %in% as.vector(nerdle$values)) |>
     pmap(function(name, value) str_sub(nerdle$string, name, name) != value) |>
     reduce(`&`) |>
     filter(.data = nerdle) |>
     keep_symbols(str_split_1(x, "")[
-      str_split_1(x, "") %in% nerdle_longer(nerdle)$value
+      str_split_1(x, "") %in% as.vector(nerdle$values)
     ])
 }
 
