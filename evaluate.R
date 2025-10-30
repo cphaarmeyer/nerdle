@@ -74,6 +74,64 @@ filter_red <- function(nerdle, x) {
     ])
 }
 
+# expected number of remaining possible solutions
+estimate_remaining <- function(rest) {
+  join <- expand_grid(guess = rest$string, solution = rest$string) |>
+    left_join(
+      nerdle_longer(rest) |> count(string, value, name = "count_guess"),
+      join_by(guess == string),
+      relationship = "many-to-many"
+    ) |>
+    left_join(
+      nerdle_longer(rest) |> count(string, value, name = "count_solution"),
+      join_by(solution == string, value)
+    ) |>
+    replace_na(list(count_solution = 0))
+  known_exact <- join |> filter(count_guess > count_solution)
+  known_lower <- join |> filter(count_guess <= count_solution)
+  step0 <- expand_grid(
+    guess = rest$string,
+    solution = rest$string,
+    string = rest$string
+  )
+  step1 <- nerdle_longer(rest) |>
+    count(string, value) |>
+    left_join(known_exact, join_by(value), relationship = "many-to-many") |>
+    filter(n != count_solution) |>
+    anti_join(x = step0, join_by(guess, solution, string))
+  step2 <- nerdle_longer(rest) |>
+    count(string, value) |>
+    complete(string, value, fill = list(n = 0)) |>
+    left_join(known_lower, join_by(value), relationship = "many-to-many") |>
+    filter(n < count_guess) |>
+    anti_join(x = step1, join_by(guess, solution, string))
+  step3 <- step2 |>
+    left_join(
+      nerdle_longer(rest),
+      join_by(string),
+      relationship = "many-to-many"
+    ) |>
+    left_join(
+      nerdle_longer(rest) |> rename(guess = string, value_guess = value),
+      join_by(guess, position)
+    ) |>
+    left_join(
+      nerdle_longer(rest) |> rename(solution = string, value_solution = value),
+      join_by(solution, position)
+    ) |>
+    mutate(green = value_guess == value_solution) |>
+    filter(
+      all(value[green] == value_guess[green]),
+      !any(value[!green] == value_guess[!green]),
+      .by = c(guess, solution, string)
+    ) |>
+    distinct(guess, solution, string)
+  step3 |>
+    count(guess, solution) |>
+    summarise(eremain = mean(n), .by = guess) |>
+    left_join(x = rest, join_by(string == guess))
+}
+
 # find best first guess
 nerdle |>
   estimate_green() |>
@@ -81,10 +139,13 @@ nerdle |>
   arrange(desc(ndistinct), desc(egreen))
 
 # example to find best second guess
-nerdle |>
+rest <- nerdle |>
   filter_black("4-37") |>
   filter_green("x0xxx=xx") |>
-  filter_red("xxx2xx1x") |>
+  filter_red("xxx2xx1x")
+
+rest |>
+  estimate_remaining() |>
   estimate_green() |>
   estimate_black() |>
-  arrange(desc(eblack), desc(egreen))
+  arrange(eremain, desc(egreen), desc(eblack))
