@@ -75,10 +75,13 @@ filter_red <- function(nerdle, x) {
 }
 
 # expected number of remaining possible solutions
-estimate_remaining <- function(rest) {
-  join <- expand_grid(guess = rest$string, solution = rest$string) |>
+estimate_remaining <- function(rest, guesses = rest) {
+  join <- duckplyr::as_duckdb_tibble(
+    expand_grid(guess = guesses$string, solution = rest$string),
+    prudence = "stingy"
+  ) |>
     left_join(
-      nerdle_longer(rest) |> count(string, value, name = "count_guess"),
+      nerdle_longer(guesses) |> count(string, value, name = "count_guess"),
       join_by(guess == string),
       relationship = "many-to-many"
     ) |>
@@ -86,22 +89,27 @@ estimate_remaining <- function(rest) {
       nerdle_longer(rest) |> count(string, value, name = "count_solution"),
       join_by(solution == string, value)
     ) |>
-    replace_na(list(count_solution = 0))
+    mutate(across(count_solution, ~ if_else(is.na(.), 0, .)))
   known_exact <- join |> filter(count_guess > count_solution)
   known_lower <- join |> filter(count_guess <= count_solution)
-  step0 <- expand_grid(
-    guess = rest$string,
-    solution = rest$string,
-    string = rest$string
+  step0 <- duckplyr::as_duckdb_tibble(
+    expand_grid(
+      guess = guesses$string,
+      solution = rest$string,
+      string = rest$string
+    ),
+    prudence = "stingy"
   )
   step1 <- nerdle_longer(rest) |>
     count(string, value) |>
+    duckplyr::as_duckdb_tibble(prudence = "stingy") |>
     left_join(known_exact, join_by(value), relationship = "many-to-many") |>
     filter(n != count_solution) |>
     anti_join(x = step0, join_by(guess, solution, string))
   step2 <- nerdle_longer(rest) |>
     count(string, value) |>
     complete(string, value, fill = list(n = 0)) |>
+    duckplyr::as_duckdb_tibble(prudence = "stingy") |>
     left_join(known_lower, join_by(value), relationship = "many-to-many") |>
     filter(n < count_guess) |>
     anti_join(x = step1, join_by(guess, solution, string))
@@ -112,24 +120,35 @@ estimate_remaining <- function(rest) {
       relationship = "many-to-many"
     ) |>
     left_join(
-      nerdle_longer(rest) |> rename(guess = string, value_guess = value),
+      nerdle_longer(guesses) |> rename(guess = string, value_guess = value),
       join_by(guess, position)
     ) |>
     left_join(
       nerdle_longer(rest) |> rename(solution = string, value_solution = value),
       join_by(solution, position)
     ) |>
-    mutate(green = value_guess == value_solution) |>
-    filter(
-      all(value[green] == value_guess[green]),
-      !any(value[!green] == value_guess[!green]),
+    mutate(green = value_guess == value_solution)
+  drop1 <- step3 |>
+    filter(green) |>
+    summarise(
+      drop = !all(value == value_guess),
       .by = c(guess, solution, string)
     ) |>
-    distinct(guess, solution, string)
+    filter(drop)
+  drop2 <- step3 |>
+    filter(!green) |>
+    summarise(
+      drop = any(value == value_guess),
+      .by = c(guess, solution, string)
+    ) |>
+    filter(drop)
   step3 |>
+    distinct(guess, solution, string) |>
+    anti_join(drop1, join_by(guess, solution, string)) |>
+    anti_join(drop2, join_by(guess, solution, string)) |>
     count(guess, solution) |>
     summarise(eremain = mean(n), .by = guess) |>
-    left_join(x = rest, join_by(string == guess))
+    left_join(x = guesses, join_by(string == guess))
 }
 
 # find best first guess
@@ -149,3 +168,5 @@ rest |>
   estimate_green() |>
   estimate_black() |>
   arrange(eremain, desc(egreen), desc(eblack))
+
+rest |> estimate_remaining(nerdle) |> arrange(eremain)
