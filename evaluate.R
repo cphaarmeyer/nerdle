@@ -1,8 +1,13 @@
 library(tidyverse)
 
+duckplyr::db_exec("PRAGMA memory_limit = '5GB'")
+
 nerdle <- nanoparquet::read_parquet("solutions.parquet") |>
   mutate(values = unname(as.matrix(pick(p1:p8))), .keep = "unused") |>
   mutate(ndistinct = apply(values, 1, n_distinct))
+
+key <- nanoparquet::read_parquet("commutations.parquet") |>
+  slice_min(stringc, by = string)
 
 nerdle_longer <- function(nerdle) {
   with(
@@ -146,6 +151,11 @@ estimate_remaining <- function(rest, guesses = rest) {
     distinct(guess, solution, string) |>
     anti_join(drop1, join_by(guess, solution, string)) |>
     anti_join(drop2, join_by(guess, solution, string)) |>
+    left_join(
+      duckplyr::as_duckdb_tibble(key, prudence = "stingy"),
+      join_by(string)
+    ) |>
+    distinct(guess, solution, stringc) |>
     count(guess, solution) |>
     summarise(eremain = mean(n), .by = guess) |>
     left_join(x = guesses, join_by(string == guess))
