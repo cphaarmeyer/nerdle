@@ -79,19 +79,21 @@ filter_red <- function(nerdle, x) {
     ])
 }
 
-# expected number of remaining possible solutions
-estimate_remaining <- function(rest, guesses = rest) {
+list_remaining <- function(guesses, solutions, set = solutions) {
+  guesses_longer <- nerdle_longer(guesses)
+  solutions_longer <- nerdle_longer(solutions)
+  set_longer <- nerdle_longer(set)
   join <- duckplyr::as_duckdb_tibble(
-    expand_grid(guess = guesses$string, solution = rest$string),
+    expand_grid(guess = guesses$string, solution = solutions$string),
     prudence = "stingy"
   ) |>
     left_join(
-      nerdle_longer(guesses) |> count(string, value, name = "count_guess"),
+      guesses_longer |> count(string, value, name = "count_guess"),
       join_by(guess == string),
       relationship = "many-to-many"
     ) |>
     left_join(
-      nerdle_longer(rest) |> count(string, value, name = "count_solution"),
+      solutions_longer |> count(string, value, name = "count_solution"),
       join_by(solution == string, value)
     ) |>
     mutate(across(count_solution, ~ if_else(is.na(.), 0, .)))
@@ -100,18 +102,18 @@ estimate_remaining <- function(rest, guesses = rest) {
   step0 <- duckplyr::as_duckdb_tibble(
     expand_grid(
       guess = guesses$string,
-      solution = rest$string,
-      string = rest$string
+      solution = solutions$string,
+      string = set$string
     ),
     prudence = "stingy"
   )
-  step1 <- nerdle_longer(rest) |>
+  step1 <- set_longer |>
     count(string, value) |>
     duckplyr::as_duckdb_tibble(prudence = "stingy") |>
     left_join(known_exact, join_by(value), relationship = "many-to-many") |>
     filter(n != count_solution) |>
     anti_join(x = step0, join_by(guess, solution, string))
-  step2 <- nerdle_longer(rest) |>
+  step2 <- set_longer |>
     count(string, value) |>
     complete(string, value, fill = list(n = 0)) |>
     duckplyr::as_duckdb_tibble(prudence = "stingy") |>
@@ -119,17 +121,13 @@ estimate_remaining <- function(rest, guesses = rest) {
     filter(n < count_guess) |>
     anti_join(x = step1, join_by(guess, solution, string))
   step3 <- step2 |>
+    left_join(set_longer, join_by(string), relationship = "many-to-many") |>
     left_join(
-      nerdle_longer(rest),
-      join_by(string),
-      relationship = "many-to-many"
-    ) |>
-    left_join(
-      nerdle_longer(guesses) |> rename(guess = string, value_guess = value),
+      guesses_longer |> rename(guess = string, value_guess = value),
       join_by(guess, position)
     ) |>
     left_join(
-      nerdle_longer(rest) |> rename(solution = string, value_solution = value),
+      solutions_longer |> rename(solution = string, value_solution = value),
       join_by(solution, position)
     ) |>
     mutate(green = value_guess == value_solution)
@@ -155,7 +153,13 @@ estimate_remaining <- function(rest, guesses = rest) {
       duckplyr::as_duckdb_tibble(key, prudence = "stingy"),
       join_by(string)
     ) |>
-    distinct(guess, solution, stringc) |>
+    distinct(guess, solution, stringc)
+}
+
+# expected number of remaining possible solutions
+estimate_remaining <- function(rest, guesses = rest) {
+  remaining <- list_remaining(guesses, rest)
+  remaining |>
     count(guess, solution) |>
     summarise(eremain = mean(n), .by = guess) |>
     left_join(x = guesses, join_by(string == guess))
@@ -179,4 +183,6 @@ rest |>
   estimate_black() |>
   arrange(eremain, desc(egreen), desc(eblack))
 
-rest |> estimate_remaining(nerdle) |> arrange(eremain)
+ranking <- rest |> estimate_remaining(nerdle)
+ranking |> arrange(eremain)
+ranking |> slice_min(eremain)
