@@ -3,8 +3,7 @@ library(tidyverse)
 duckplyr::db_exec("PRAGMA memory_limit = '5GB'")
 
 nerdle <- nanoparquet::read_parquet("solutions.parquet") |>
-  mutate(values = unname(as.matrix(pick(p1:p8))), .keep = "unused") |>
-  mutate(ndistinct = apply(values, 1, n_distinct))
+  mutate(values = unname(as.matrix(pick(p1:p8))), .keep = "unused")
 
 key <- nanoparquet::read_parquet("commutations.parquet") |>
   slice_min(stringc, by = string)
@@ -20,16 +19,8 @@ nerdle_longer <- function(nerdle) {
   )
 }
 
-drop_symbols <- function(nerdle, x) {
-  nerdle_longer(nerdle) |>
-    filter(any(x %in% value), .by = string) |>
-    anti_join(x = nerdle, join_by(string))
-}
-
-keep_symbols <- function(nerdle, y) {
-  nerdle_longer(nerdle) |>
-    filter(all(y %in% value), .by = string) |>
-    semi_join(x = nerdle, join_by(string))
+add_ndistinct <- function(nerdle) {
+  nerdle |> mutate(ndistinct = apply(values, 1, n_distinct))
 }
 
 # expected number of green symbols
@@ -56,27 +47,39 @@ estimate_black <- function(nerdle) {
     left_join(x = nerdle, join_by(string))
 }
 
-filter_black <- function(nerdle, x) {
-  drop_symbols(nerdle, str_split_1(x, ""))
-}
-
-filter_green <- function(nerdle, x) {
-  enframe(str_split_1(x, "")) |>
-    filter(value %in% as.vector(nerdle$values)) |>
-    pmap(function(name, value) str_sub(nerdle$string, name, name) == value) |>
-    reduce(`&`) |>
-    filter(.data = nerdle)
-}
-
-filter_red <- function(nerdle, x) {
-  enframe(str_split_1(x, "")) |>
-    filter(value %in% as.vector(nerdle$values)) |>
-    pmap(function(name, value) str_sub(nerdle$string, name, name) != value) |>
-    reduce(`&`) |>
-    filter(.data = nerdle) |>
-    keep_symbols(str_split_1(x, "")[
-      str_split_1(x, "") %in% as.vector(nerdle$values)
-    ])
+filter_nerdle <- function(nerdle, guess, result) {
+  df <- tibble(
+    guess = str_split_1(guess, ""),
+    result = str_split_1(result, "")
+  ) |>
+    mutate(position = row_number())
+  b <- df |> filter(result == "b")
+  known_exact <- union(b, semi_join(df, b, join_by(guess))) |>
+    summarise(exact = sum(result != "b"), .by = guess)
+  known_lower <- df |> filter(result != "b") |> count(guess, name = "lower")
+  step1 <- nerdle_longer(nerdle) |>
+    count(string, value) |>
+    inner_join(known_exact, join_by(value == guess)) |>
+    filter(n != exact) |>
+    anti_join(x = nerdle, join_by(string))
+  step2 <- nerdle_longer(step1) |>
+    count(string, value) |>
+    complete(string, value, fill = list(n = 0)) |>
+    inner_join(known_lower, join_by(value == guess)) |>
+    filter(n < lower) |>
+    anti_join(x = step1, join_by(string))
+  step3 <- nerdle_longer(step2) |> left_join(df, join_by(position))
+  drop1 <- step3 |>
+    filter(result == "g") |>
+    summarise(drop = !all(value == guess), .by = string) |>
+    filter(drop)
+  drop2 <- step3 |>
+    filter(result != "g") |>
+    summarise(drop = any(value == guess), .by = string) |>
+    filter(drop)
+  step2 |>
+    anti_join(drop1, join_by(string)) |>
+    anti_join(drop2, join_by(string))
 }
 
 list_remaining <- function(guesses, solutions, set = solutions) {
@@ -166,23 +169,20 @@ estimate_remaining <- function(rest, guesses = rest) {
 }
 
 # find best first guess
-nerdle |>
+add_ndistinct(nerdle) |>
   estimate_green() |>
   estimate_black() |>
   arrange(desc(ndistinct), desc(egreen))
 
 # example to find best second guess
-rest <- nerdle |>
-  filter_black("4-37") |>
-  filter_green("x0xxx=xx") |>
-  filter_red("xxx2xx1x")
+rest <- nerdle |> filter_nerdle("40-23=17", "bgbrbgrb")
 
-rest |>
+add_ndistinct(rest) |>
   estimate_remaining() |>
   estimate_green() |>
   estimate_black() |>
   arrange(eremain, desc(egreen), desc(eblack))
 
-ranking <- rest |> estimate_remaining(nerdle)
+ranking <- rest |> estimate_remaining(nerdle) |> add_ndistinct()
 ranking |> arrange(eremain)
 ranking |> slice_min(eremain)
