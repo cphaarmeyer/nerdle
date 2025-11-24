@@ -168,14 +168,8 @@ estimate_remaining <- function(rest, guesses = rest) {
     left_join(x = guesses, join_by(string == guess))
 }
 
-# find best first guess
-add_ndistinct(nerdle) |>
-  estimate_green() |>
-  estimate_black() |>
-  arrange(desc(ndistinct), desc(egreen))
-
 # example to find best second guess
-rest <- nerdle |> filter_nerdle("40-23=17", "bgbrbgrb")
+rest <- nerdle |> filter_nerdle("48-36=12", "brrbggbb")
 
 add_ndistinct(rest) |>
   estimate_remaining() |>
