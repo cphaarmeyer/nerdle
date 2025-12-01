@@ -1,6 +1,6 @@
 library(tidyverse)
 
-duckplyr::db_exec("PRAGMA memory_limit = '5GB'")
+duckplyr::db_exec("PRAGMA memory_limit = '10GB'")
 
 nerdle <- nanoparquet::read_parquet("solutions.parquet") |>
   mutate(values = unname(as.matrix(pick(p1:p8))), .keep = "unused")
@@ -151,20 +151,29 @@ list_remaining <- function(guesses, solutions, set = solutions) {
   step3 |>
     distinct(guess, solution, string) |>
     anti_join(drop1, join_by(guess, solution, string)) |>
-    anti_join(drop2, join_by(guess, solution, string)) |>
+    anti_join(drop2, join_by(guess, solution, string))
+}
+
+# expected number of remaining possible solutions
+# expected chance to guess correct
+estimate_remaining <- function(rest, guesses = rest) {
+  remaining <- list_remaining(guesses, rest)
+  remaining |>
+    left_join(
+      duckplyr::as_duckdb_tibble(key, prudence = "stingy") |>
+        rename(solution = string, solutionc = stringc),
+      join_by(solution)
+    ) |>
     left_join(
       duckplyr::as_duckdb_tibble(key, prudence = "stingy"),
       join_by(string)
     ) |>
-    distinct(guess, solution, stringc)
-}
-
-# expected number of remaining possible solutions
-estimate_remaining <- function(rest, guesses = rest) {
-  remaining <- list_remaining(guesses, rest)
-  remaining |>
-    count(guess, solution) |>
-    summarise(eremain = mean(n), .by = guess) |>
+    summarise(
+      n = n_distinct(stringc),
+      p = mean(as.integer(solutionc == stringc)),
+      .by = c(guess, solution)
+    ) |>
+    summarise(eremain = mean(n), echance = mean(p), .by = guess) |>
     left_join(x = guesses, join_by(string == guess))
 }
 
@@ -175,8 +184,8 @@ add_ndistinct(rest) |>
   estimate_remaining() |>
   estimate_green() |>
   estimate_black() |>
-  arrange(eremain, desc(egreen), desc(eblack))
+  arrange(desc(echance), eremain, desc(egreen), desc(eblack))
 
 ranking <- rest |> estimate_remaining(nerdle) |> add_ndistinct()
-ranking |> arrange(eremain)
-ranking |> slice_min(eremain)
+ranking |> arrange(desc(echance))
+ranking |> slice_max(echance)

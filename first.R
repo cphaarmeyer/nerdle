@@ -78,9 +78,7 @@ list_remaining <- function(guesses, solutions, set = solutions) {
   step3 |>
     distinct(guess, solution, string) |>
     anti_join(drop1, join_by(guess, solution, string)) |>
-    anti_join(drop2, join_by(guess, solution, string)) |>
-    left_join(key, join_by(string)) |>
-    distinct(guess, solution, stringc)
+    anti_join(drop2, join_by(guess, solution, string))
 }
 
 make_chunks <- function(x, chunk_size, min_chunks) {
@@ -109,7 +107,17 @@ out <- expand_grid(
       solutions,
       function(guesses, solutions) {
         gc()
-        list_remaining(guesses, solutions, set = nerdle) |> count(solution)
+        list_remaining(guesses, solutions, set = nerdle) |>
+          left_join(
+            key |> rename(solution = string, solutionc = stringc),
+            join_by(solution)
+          ) |>
+          left_join(key, join_by(string)) |>
+          summarise(
+            n = n_distinct(stringc),
+            p = mean(solutionc == stringc),
+            .by = solution
+          )
       },
       .progress = TRUE
     )
@@ -117,6 +125,12 @@ out <- expand_grid(
 ranking <- out |>
   select(-solutions) |>
   unnest(res) |>
-  summarise(eremain = mean(n), sd = sd(n), .by = guesses) |>
+  summarise(
+    eremain = mean(n),
+    sdremain = sd(n),
+    echance = mean(p),
+    sdchance = sd(p),
+    .by = guesses
+  ) |>
   unnest(guesses)
 ranking |> arrange(eremain)
