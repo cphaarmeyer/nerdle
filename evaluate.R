@@ -177,14 +177,24 @@ estimate_remaining <- function(rest, guesses = rest) {
     left_join(x = guesses, join_by(string == guess))
 }
 
+# probability to be correct
+add_pcorrect <- function(rest) {
+  rest |>
+    left_join(key, join_by(string)) |>
+    add_count(stringc) |>
+    mutate(pcorrect = n / n()) |>
+    select(-c(stringc, n))
+}
+
 # example to find best second guess
 rest <- nerdle |> filter_nerdle("48-36=12", "brrbggbb")
 
 add_ndistinct(rest) |>
   estimate_remaining() |>
+  add_pcorrect() |>
   estimate_green() |>
   estimate_black() |>
-  arrange(desc(echance), eremain, desc(egreen), desc(eblack))
+  arrange(desc(echance), eremain, desc(pcorrect), desc(egreen), desc(eblack))
 
 ranking <- rest |> estimate_remaining(nerdle) |> add_ndistinct()
 ranking |> arrange(desc(echance))
